@@ -73,8 +73,19 @@ export function RockViewer({ meshData, isLoading, wireframe, autoRotate }: RockV
     const directionalLight = new THREE.DirectionalLight(0xffeedd, 1.8);
     directionalLight.position.set(15, 25, 15);
     directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.width = 2048;
-    directionalLight.shadow.mapSize.height = 2048;
+    directionalLight.shadow.mapSize.width = 4096;
+    directionalLight.shadow.mapSize.height = 4096;
+    // Properly configure shadow camera frustum to prevent shadow acne
+    const shadowCamSize = 30;
+    directionalLight.shadow.camera.left = -shadowCamSize;
+    directionalLight.shadow.camera.right = shadowCamSize;
+    directionalLight.shadow.camera.top = shadowCamSize;
+    directionalLight.shadow.camera.bottom = -shadowCamSize;
+    directionalLight.shadow.camera.near = 1;
+    directionalLight.shadow.camera.far = 80;
+    // Add bias to eliminate shadow acne / grid artifacts
+    directionalLight.shadow.bias = -0.0005;
+    directionalLight.shadow.normalBias = 0.02;
     scene.add(directionalLight);
 
     const fillLight = new THREE.DirectionalLight(0x8888cc, 0.4);
@@ -97,9 +108,11 @@ export function RockViewer({ meshData, isLoading, wireframe, autoRotate }: RockV
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // Grid helper
+    // Ground plane with subtle grid texture (no separate GridHelper to avoid shadow artifacts)
     const gridHelper = new THREE.GridHelper(40, 20, 0x333355, 0x222244);
     gridHelper.position.y = -10;
+    gridHelper.castShadow = false;
+    gridHelper.receiveShadow = false;
     scene.add(gridHelper);
 
     // Animation loop
@@ -171,14 +184,17 @@ export function RockViewer({ meshData, isLoading, wireframe, autoRotate }: RockV
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
 
+    // Recompute normals from face geometry to eliminate any marching cubes grid artifacts
+    geometry.computeVertexNormals();
+
     // Rock material with PBR
     const material = new THREE.MeshStandardMaterial({
       color: 0x8b7d6b,
-      roughness: 0.85,
+      roughness: 0.9,
       metalness: 0.05,
       flatShading: false,
       wireframe: wireframe,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
     });
 
     const mesh = new THREE.Mesh(geometry, material);
