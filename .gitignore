@@ -52,3 +52,19 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Sandbox / environment files
+.zscripts/
+Caddyfile
+
+# Database
+db/*.db
+
+# Worklog (internal)
+worklog.md
+
+# Examples not part of the rock fracturing project
+examples/
+
+# Mini services (not used)
+mini-services/
