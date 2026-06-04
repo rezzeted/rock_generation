@@ -705,177 +705,9 @@ struct SDFBlock : public SDFNode
 };
 
 // ============================================================
-// Cliff generation - Terrain amplification SDF nodes
+// Cliff generation - Direct block-based wall generation
+// (Uses same pipeline as single rock, but with wall-shaped box)
 // ============================================================
-
-struct SDFHeightfield : public SDFNode
-{
-    double heightScale;
-    double baseHeight;
-    int seed;
-
-    SDFHeightfield(double hs, double bh, int s) : heightScale(hs), baseHeight(bh), seed(s)
-    {
-        box = Box(Vector3(-50, -5, -50), Vector3(50, 50, 50));
-    }
-
-    double Signed(const Vector3& p) const
-    {
-        // Procedural cliff height function
-        double h = baseHeight;
-        double x = p.x;
-        double z = p.z;
-
-        // Create a cliff face: high plateau on negative X side, steep drop to lower ground
-        // The cliff edge position varies along Z using noise for natural variation
-        double cliffX = 5.0 * sin(z * 0.1) + 3.0 * PerlinNoise::GetValue(Vector3(z * 0.05, seed * 0.1, 0.0));
-
-        // Base terrain: add fBm noise for natural undulation
-        h += PerlinNoise::fBm(Vector3(x * 0.03, z * 0.03, seed * 0.01), 1.0, 1.0, 5) * heightScale * 0.3;
-
-        // Steep cliff face: drop height on the positive-X side
-        h -= Math::Step(x, cliffX - 2.0, cliffX + 2.0) * heightScale * 0.8;
-
-        // Scree/talus at the base: lower ground slopes down gently
-        if (x > cliffX + 2.0)
-        {
-            double dist = x - (cliffX + 2.0);
-            h -= dist * 0.15;
-            // Add roughness to the scree
-            h += PerlinNoise::fBm(Vector3(x * 0.1, z * 0.1, seed * 0.05 + 100.0), 0.5, 1.0, 3) * 0.5;
-        }
-
-        // Add some noise to the cliff face itself for roughness
-        if (x > cliffX - 3.0 && x < cliffX + 3.0)
-        {
-            h += PerlinNoise::fBm(Vector3(x * 0.08, z * 0.08, seed * 0.07 + 50.0), 0.3, 1.0, 3) * 0.4;
-        }
-
-        return p.y - h;
-    }
-};
-
-struct SDFCliffReplication : public SDFNode
-{
-    SDFNode* tile;          // Pre-built block tile SDF (with warping)
-    SDFNode* terrain;       // Terrain SDF (heightfield)
-    double tileSize;        // Size of the fracture tile cube
-    double slopeThreshold;  // Max slope for block placement (lower = more vertical required)
-    double distMin, distMax; // Distance range from surface for blocks
-
-    SDFCliffReplication(SDFNode* t, SDFNode* ter, double ts, double st, double dmin, double dmax)
-        : tile(t), terrain(ter), tileSize(ts), slopeThreshold(st), distMin(dmin), distMax(dmax)
-    {
-        box = Box(Vector3(-50, -5, -50), Vector3(50, 50, 50));
-    }
-
-    // Compute presence function: blocks only on steep surfaces near the terrain
-    double Presence(const Vector3& p) const
-    {
-        // Compute terrain gradient via central differences
-        static const double eps = 0.05;
-        double dRight = terrain->Signed(Vector3(p.x + eps, p.y, p.z));
-        double dLeft  = terrain->Signed(Vector3(p.x - eps, p.y, p.z));
-        double dUp    = terrain->Signed(Vector3(p.x, p.y + eps, p.z));
-        double dDown  = terrain->Signed(Vector3(p.x, p.y - eps, p.z));
-        double dFront = terrain->Signed(Vector3(p.x, p.y, p.z + eps));
-        double dBack  = terrain->Signed(Vector3(p.x, p.y, p.z - eps));
-
-        Vector3 gradient = Vector3(
-            (dRight - dLeft) / (2.0 * eps),
-            (dUp - dDown) / (2.0 * eps),
-            (dFront - dBack) / (2.0 * eps)
-        );
-
-        double gradMag = Magnitude(gradient);
-        if (gradMag < 1e-8) return 0.0;
-
-        // Slope = how vertical the terrain is
-        // For a cliff, the gradient should be mostly horizontal (small Y component relative to total)
-        double verticalComponent = Math::Abs(gradient.y);
-        double slope = verticalComponent / gradMag; // 1 = flat, 0 = vertical cliff
-
-        // Presence is 1 when slope is steep (low slope value = near-vertical)
-        double presence = 1.0 - Math::Clamp(slope / slopeThreshold, 0.0, 1.0);
-
-        // Also check distance from terrain surface
-        double distToSurface = Math::Abs(terrain->Signed(p));
-        double distFactor = 1.0 - Math::Clamp((distToSurface - distMin) / (distMax - distMin), 0.0, 1.0);
-
-        return presence * distFactor;
-    }
-
-    // Evaluate tile SDF with modulo wrapping
-    double TileSDF(const Vector3& p) const
-    {
-        // Wrap point into tile space using modulo
-        double halfTile = tileSize / 2.0;
-        Vector3 q = Vector3(
-            p.x - floor((p.x + halfTile) / tileSize) * tileSize,
-            p.y - floor((p.y + halfTile) / tileSize) * tileSize,
-            p.z - floor((p.z + halfTile) / tileSize) * tileSize
-        );
-        return tile->Signed(q);
-    }
-
-    double Signed(const Vector3& p) const
-    {
-        // Early out: if too far from terrain, skip
-        double terrainDist = terrain->Signed(p);
-        if (terrainDist > distMax + tileSize) return terrainDist;
-
-        // Compute presence (slope + distance check)
-        double presence = Presence(p);
-
-        // If not in a valid location for blocks, just return terrain
-        if (presence < 0.01) return terrainDist;
-
-        // Evaluate the replicated tile SDF
-        double tileVal = TileSDF(p);
-
-        // Check neighboring cells for boundary continuity
-        double minTileVal = tileVal;
-        double halfTile = tileSize / 2.0;
-        for (int dx = -1; dx <= 1; dx++)
-        {
-            for (int dy = -1; dy <= 1; dy++)
-            {
-                for (int dz = -1; dz <= 1; dz++)
-                {
-                    if (dx == 0 && dy == 0 && dz == 0) continue;
-                    Vector3 offset = Vector3(dx * tileSize, dy * tileSize, dz * tileSize);
-                    Vector3 neighborP = p + offset;
-                    // Only check if we're near a tile boundary
-                    Vector3 localP = Vector3(
-                        fmod(p.x + halfTile, tileSize) - halfTile,
-                        fmod(p.y + halfTile, tileSize) - halfTile,
-                        fmod(p.z + halfTile, tileSize) - halfTile
-                    );
-                    double boundaryDist = Math::Min(
-                        Math::Min(Math::Abs(localP.x - halfTile), Math::Abs(localP.x + halfTile)),
-                        Math::Min(
-                            Math::Min(Math::Abs(localP.y - halfTile), Math::Abs(localP.y + halfTile)),
-                            Math::Min(Math::Abs(localP.z - halfTile), Math::Abs(localP.z + halfTile))
-                        )
-                    );
-                    if (boundaryDist < tileSize * 0.3)
-                    {
-                        double nVal = tile->Signed(neighborP);
-                        if (nVal < minTileVal) minTileVal = nVal;
-                    }
-                }
-            }
-        }
-
-        // Blend: where presence is high, use blocks; otherwise terrain
-        // f_result(p) = max(f_terrain(p), f_replicated_blocks(p) * presence)
-        double blockSDF = minTileVal;
-        double blendedBlock = blockSDF * presence + terrainDist * (1.0 - presence);
-
-        // Union of terrain and blocks: take the minimum (most inside)
-        return Math::Min(terrainDist, blendedBlock);
-    }
-};
 
 // Generate procedural warping texture (replaces stb_image loading)
 static void GenerateProceduralWarpingField()
@@ -995,6 +827,66 @@ FractureSet GenerateFractures(FractureType type, const Box& box, double r)
             p.y += step + Random::Uniform(-noiseStep, noiseStep);
             Vector3 axis = Vector3(0, -1, 0);
             set.fractures.push_back(Circle(p, axis, 20.0));
+        }
+    }
+    else if (type == FractureType::Cliff)
+    {
+        // Cliff fracture pattern: horizontal bedding + vertical joints + some diagonal cracks
+        // This creates the layered, columnar look of a natural cliff face
+        
+        // (a) Horizontal bedding planes - primary fracture direction
+        // More layers than Tabular since cliff is taller
+        const int nHorizontalLayers = 12;
+        Vector3 p = box[0];
+        p.x += box.Diagonal()[0] / 2.0;
+        p.z += box.Diagonal()[1] / 2.0;
+        double step = box.Size()[1] / double(nHorizontalLayers); // Y axis = height
+        double noiseStep = step / 8.0;
+        Vector3 currentP = p;
+        for (int i = 0; i < nHorizontalLayers - 1; i++)
+        {
+            currentP.y += step + Random::Uniform(-noiseStep, noiseStep);
+            // Slight tilt of bedding planes for natural look
+            double tiltX = Random::Uniform(-0.05, 0.05);
+            double tiltZ = Random::Uniform(-0.05, 0.05);
+            Vector3 axis = Normalize(Vector3(tiltX, -1, tiltZ));
+            // Radius should cover the full wall extent in X and Z
+            double radius = Math::Max(box.Size()[0], box.Size()[2]) * 1.2;
+            set.fractures.push_back(Circle(currentP, axis, radius));
+        }
+        
+        // (b) Vertical/sub-vertical joints - creates column-like structure
+        // These are fractures that cut across the bedding planes vertically
+        int nVerticalJoints = 8;
+        for (int i = 0; i < nVerticalJoints; i++)
+        {
+            // Random position along the wall length (Z axis) and height (Y axis)
+            Vector3 jointPos = Vector3(
+                box.Center()[0] + Random::Uniform(-box.Size()[0] * 0.3, box.Size()[0] * 0.3),
+                Random::Uniform(box[0][1], box[1][1]),
+                Random::Uniform(box[0][2], box[1][2])
+            );
+            // Mostly vertical but with some deviation
+            double deviation = Random::Uniform(-0.15, 0.15);
+            Vector3 axis = Normalize(Vector3(deviation, 0, 1));
+            double radius = box.Size()[1] * 0.8;
+            set.fractures.push_back(Circle(jointPos, axis, radius));
+        }
+        
+        // (c) Diagonal shear fractures - for irregular crack patterns
+        int nDiagonal = 5;
+        for (int i = 0; i < nDiagonal; i++)
+        {
+            Vector3 fracPos = Vector3(
+                box.Center()[0] + Random::Uniform(-box.Size()[0] * 0.3, box.Size()[0] * 0.3),
+                Random::Uniform(box[0][1], box[1][1]),
+                Random::Uniform(box[0][2], box[1][2])
+            );
+            double angle = Random::Uniform(0.3, 0.8);
+            int sign = Random::Integer() % 2 == 0 ? 1 : -1;
+            Vector3 axis = Normalize(Vector3(sign * angle, -1, 0));
+            double radius = box.Size()[1] * 0.6;
+            set.fractures.push_back(Circle(fracPos, axis, radius));
         }
     }
     return set;
@@ -1302,6 +1194,38 @@ MC::mcMesh PolygonizeSDF(const Box& box, SDFNode* node, int n)
     return mesh;
 }
 
+// Non-uniform resolution version for elongated boxes (like cliff walls)
+// nx, ny, nz can differ to maintain consistent cell size across axes
+MC::mcMesh PolygonizeSDFNonUniform(const Box& box, SDFNode* node, int nx, int ny, int nz)
+{
+    MC::MC_FLOAT* field = new MC::MC_FLOAT[nx * ny * nz];
+    Vector3 cellDiagonal = Vector3(
+        (box[1][0] - box[0][0]) / (nx - 1),
+        (box[1][1] - box[0][1]) / (ny - 1),
+        (box[1][2] - box[0][2]) / (nz - 1)
+    );
+    for (int i = 0; i < nx; i++)
+    {
+        for (int j = 0; j < ny; j++)
+        {
+            for (int k = 0; k < nz; k++)
+            {
+                Vector3 p = Vector3(
+                    box[0][0] + i * cellDiagonal[0],
+                    box[0][1] + j * cellDiagonal[1],
+                    box[0][2] + k * cellDiagonal[2]
+                );
+                field[(k * ny + j) * nx + i] = (float)node->Signed(p);
+            }
+        }
+    }
+
+    MC::mcMesh mesh;
+    MC::marching_cube(field, nx, ny, nz, mesh);
+    delete[] field;
+    return mesh;
+}
+
 // ============================================================
 // Emscripten Export API
 // ============================================================
@@ -1376,11 +1300,12 @@ int getTriangleCount() { return (int)g_indices.size() / 3; }
 int getVertexDataSize() { return (int)g_vertices.size() * sizeof(float); }
 int getIndexDataSize() { return (int)g_indices.size() * sizeof(unsigned int); }
 
-// Generate cliff terrain with fractured blocks
-// fractureType: unused (always uses Tabular internally - best for cliffs)
-// resolution: marching cubes resolution (e.g., 50-80 for cliffs, larger domain)
+// Generate cliff wall with fractured blocks
+// Same pipeline as generateRock, but with an elongated wall-shaped box
+// and Cliff-specific fracture patterns (horizontal bedding + vertical joints)
+// resolution: base marching cubes resolution (adapted per-axis for the wall shape)
 // seed: random seed
-// tileSize: size of the cubic fracture tile
+// tileSize: controls the overall wall scale
 int generateCliff(int fractureType, int resolution, int seed, double tileSize)
 {
     srand(seed);
@@ -1388,38 +1313,46 @@ int generateCliff(int fractureType, int resolution, int seed, double tileSize)
     // Generate procedural warping field
     GenerateProceduralWarpingField();
 
-    // (1) Create the block tile SDF (use Tabular fracture type - best for cliffs)
-    Box tile = Box(Vector3(0), tileSize / 2.0);
-    PointSet3 samples = PoissonSamplingBox(tile, 0.5, 10000);
-    auto fractures = GenerateFractures(FractureType::Tabular, tile, 3);
-    auto clusters = ComputeBlockClusters(samples, fractures);
-    SDFNode* tileSDF = ComputeBlockSDF(clusters);
-    if (!tileSDF) return 0;
+    // Wall dimensions: thin in depth (X), tall in height (Y), wide in length (Z)
+    // Scale proportional to tileSize
+    double wallDepth  = tileSize * 0.4;   // X: thin
+    double wallHeight = tileSize * 1.5;   // Y: tall
+    double wallLength = tileSize * 3.0;   // Z: wide/long
 
-    // (2) Create the terrain heightfield
-    double heightScale = 15.0;
-    double baseHeight = 5.0;
-    SDFHeightfield* terrain = new SDFHeightfield(heightScale, baseHeight, seed);
-
-    // (3) Create the cliff replication operator
-    // slopeThreshold: 0.5 means blocks appear on surfaces steeper than ~60 degrees
-    // distMin/distMax: blocks appear within 0 to tileSize distance from terrain surface
-    SDFCliffReplication* cliffSDF = new SDFCliffReplication(
-        tileSDF, terrain, tileSize,
-        0.5,   // slopeThreshold
-        0.0,   // distMin
-        tileSize  // distMax
+    Box wallBox = Box(
+        Vector3(-wallDepth / 2.0, -wallHeight / 2.0, -wallLength / 2.0),
+        Vector3( wallDepth / 2.0,  wallHeight / 2.0,  wallLength / 2.0)
     );
 
-    // (4) Define sampling domain for the cliff
-    // The cliff extends from about -20 to +20 in X, -5 to 25 in Y, -20 to +20 in Z
-    Box cliffBox = Box(Vector3(-20, -2, -20), Vector3(20, 25, 20));
+    // (1) Sample the wall box - scale samples with volume
+    double sampleRadius = 0.5;
+    int sampleCount = 10000;
+    PointSet3 samples = PoissonSamplingBox(wallBox, sampleRadius, sampleCount);
 
-    // (5) Use lower resolution for cliffs (larger domain)
-    int cliffResolution = Math::Min(resolution, 70);
+    // (2) Generate Cliff-specific fracture distribution
+    auto fractures = GenerateFractures(FractureType::Cliff, wallBox, 3);
 
-    // (6) Polygonize
-    MC::mcMesh mesh = PolygonizeSDF(cliffBox, cliffSDF, cliffResolution);
+    // (3) Clustering - same as generateRock
+    auto clusters = ComputeBlockClusters(samples, fractures);
+
+    // (4) Implicit primitive extraction - same as generateRock
+    SDFNode* sdf = ComputeBlockSDF(clusters);
+    if (!sdf) return 0;
+
+    // (5) Mesh extraction with non-uniform resolution
+    // Target cell size: consistent detail level across all axes
+    double targetCellSize = (double)tileSize / (double)resolution;
+    int nx = Math::Max(10, (int)(wallDepth / targetCellSize) + 1);
+    int ny = Math::Max(20, (int)(wallHeight / targetCellSize) + 1);
+    int nz = Math::Max(30, (int)(wallLength / targetCellSize) + 1);
+    
+    // Cap resolution to keep computation feasible in browser
+    // Total cells = nx*ny*nz must stay reasonable (aim for < 500K cells)
+    nx = Math::Min(nx, 20);
+    ny = Math::Min(ny, 60);
+    nz = Math::Min(nz, 80);
+    
+    MC::mcMesh mesh = PolygonizeSDFNonUniform(wallBox, sdf, nx, ny, nz);
 
     // Copy to global buffers
     g_vertices.clear();

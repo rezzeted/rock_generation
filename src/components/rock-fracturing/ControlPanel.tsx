@@ -31,7 +31,7 @@ const FRACTURE_TYPES = [
   { value: '1', label: 'Tabular', description: 'Parallel bedding planes', icon: '▬' },
   { value: '2', label: 'Rhombohedral', description: 'Oblique-shaped equidimensional', icon: '◇' },
   { value: '3', label: 'Polyhedral', description: 'Irregular jointing', icon: '⬡' },
-  { value: '4', label: 'Cliff', description: 'Rocky cliff wall with fractured blocks', icon: '⛰️' },
+  { value: '4', label: 'Cliff', description: 'Rocky wall from fractured blocks', icon: '⛰️' },
 ] as const;
 
 export function ControlPanel({
@@ -195,7 +195,7 @@ export function ControlPanel({
         ) : (
           <>
             <Sparkles className="h-5 w-5 mr-2" />
-            Generate Rock
+            {params.fractureType === 4 ? 'Generate Cliff' : 'Generate Rock'}
           </>
         )}
       </Button>

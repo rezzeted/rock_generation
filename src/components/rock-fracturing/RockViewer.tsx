@@ -209,8 +209,21 @@ export function RockViewer({ meshData, isLoading, wireframe, autoRotate, isCliff
       const radius = geometry.boundingSphere.radius;
       const dist = radius * 3.5;
       if (isCliffType) {
-        // For cliff: frontal view looking at the cliff face (positive X direction)
-        cameraRef.current.position.set(dist * 1.2, dist * 0.4, 0);
+        // For cliff: angled view to see the wall face and depth
+        // Wall is elongated in Z, thin in X - view from front-side angle
+        cameraRef.current.position.set(dist * 0.8, dist * 0.5, dist * 0.6);
+        // Expand shadow camera for the larger cliff mesh
+        const shadowLight = sceneRef.current.children.find(
+          c => c instanceof THREE.DirectionalLight && (c as THREE.DirectionalLight).castShadow
+        ) as THREE.DirectionalLight | undefined;
+        if (shadowLight) {
+          const sc = shadowLight.shadow.camera;
+          sc.left = -radius * 2;
+          sc.right = radius * 2;
+          sc.top = radius * 2;
+          sc.bottom = -radius * 2;
+          sc.updateProjectionMatrix();
+        }
       } else {
         cameraRef.current.position.set(dist * 0.7, dist * 0.5, dist * 0.7);
       }

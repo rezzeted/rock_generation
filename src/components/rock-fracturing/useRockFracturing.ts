@@ -54,7 +54,7 @@ export function useRockFracturing() {
         // Check if the script is already loaded
         if (typeof window.createRockFracturingModule === 'function') {
           const rockModule = await window.createRockFracturingModule({
-            locateFile: (path: string) => `/wasm/${path}`
+            locateFile: (path: string) => `/wasm/${path}?v=4`
           });
           if (mounted) {
             moduleRef.current = rockModule;
@@ -65,7 +65,7 @@ export function useRockFracturing() {
 
         // Load the script dynamically
         const script = document.createElement('script');
-        script.src = '/wasm/rock_fracturing.js';
+        script.src = '/wasm/rock_fracturing.js?v=4';
         script.async = true;
 
         await new Promise<void>((resolve, reject) => {
@@ -80,7 +80,7 @@ export function useRockFracturing() {
         }
 
         const rockModule = await window.createRockFracturingModule({
-          locateFile: (path: string) => `/wasm/${path}`
+          locateFile: (path: string) => `/wasm/${path}?v=4`
         });
 
         if (mounted) {
@@ -101,6 +101,7 @@ export function useRockFracturing() {
 
   const generate = useCallback(async (params: GenerationParams) => {
     if (!moduleRef.current) {
+      console.error('[WASM] Module not loaded');
       setError('WASM module not loaded');
       return null;
     }
@@ -114,6 +115,8 @@ export function useRockFracturing() {
     try {
       const mod = moduleRef.current;
       const startTime = performance.now();
+
+      console.log('[WASM] Starting generation, fractureType:', params.fractureType, 'has _generateCliff:', !!mod._generateCliff);
 
       // Use generateCliff for cliff type (4), generateRock for others
       const triCount = params.fractureType === 4
@@ -131,6 +134,7 @@ export function useRockFracturing() {
           );
 
       const endTime = performance.now();
+      console.log('[WASM] Generation complete, triCount:', triCount);
       setGenerationTime(endTime - startTime);
 
       if (triCount <= 0) {
