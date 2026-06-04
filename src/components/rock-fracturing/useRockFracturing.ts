@@ -5,6 +5,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 // Type definitions for the WASM module
 interface RockFracturingModule {
   _generateRock: (fractureType: number, resolution: number, seed: number, tileSize: number) => number;
+  _generateCliff: (fractureType: number, resolution: number, seed: number, tileSize: number) => number;
   _getVertices: () => number;
   _getNormals: () => number;
   _getIndices: () => number;
@@ -114,12 +115,20 @@ export function useRockFracturing() {
       const mod = moduleRef.current;
       const startTime = performance.now();
 
-      const triCount = mod._generateRock(
-        params.fractureType,
-        params.resolution,
-        params.seed,
-        params.tileSize
-      );
+      // Use generateCliff for cliff type (4), generateRock for others
+      const triCount = params.fractureType === 4
+        ? mod._generateCliff(
+            params.fractureType,
+            params.resolution,
+            params.seed,
+            params.tileSize
+          )
+        : mod._generateRock(
+            params.fractureType,
+            params.resolution,
+            params.seed,
+            params.tileSize
+          );
 
       const endTime = performance.now();
       setGenerationTime(endTime - startTime);

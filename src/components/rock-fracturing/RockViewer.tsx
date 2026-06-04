@@ -10,9 +10,10 @@ interface RockViewerProps {
   isLoading: boolean;
   wireframe: boolean;
   autoRotate: boolean;
+  isCliffType: boolean;
 }
 
-export function RockViewer({ meshData, isLoading, wireframe, autoRotate }: RockViewerProps) {
+export function RockViewer({ meshData, isLoading, wireframe, autoRotate, isCliffType }: RockViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -187,10 +188,10 @@ export function RockViewer({ meshData, isLoading, wireframe, autoRotate }: RockV
     // Recompute normals from face geometry to eliminate any marching cubes grid artifacts
     geometry.computeVertexNormals();
 
-    // Rock material with PBR
+    // Rock material with PBR (grey-brown for cliffs, standard rock color otherwise)
     const material = new THREE.MeshStandardMaterial({
-      color: 0x8b7d6b,
-      roughness: 0.9,
+      color: isCliffType ? 0x7a7568 : 0x8b7d6b,
+      roughness: isCliffType ? 0.95 : 0.9,
       metalness: 0.05,
       flatShading: false,
       wireframe: wireframe,
@@ -207,11 +208,16 @@ export function RockViewer({ meshData, isLoading, wireframe, autoRotate }: RockV
     if (geometry.boundingSphere && cameraRef.current && controlsRef.current) {
       const radius = geometry.boundingSphere.radius;
       const dist = radius * 3.5;
-      cameraRef.current.position.set(dist * 0.7, dist * 0.5, dist * 0.7);
+      if (isCliffType) {
+        // For cliff: frontal view looking at the cliff face (positive X direction)
+        cameraRef.current.position.set(dist * 1.2, dist * 0.4, 0);
+      } else {
+        cameraRef.current.position.set(dist * 0.7, dist * 0.5, dist * 0.7);
+      }
       controlsRef.current.target.set(0, 0, 0);
       controlsRef.current.update();
     }
-  }, [meshData]);
+  }, [meshData, isCliffType]);
 
   // Update wireframe
   useEffect(() => {

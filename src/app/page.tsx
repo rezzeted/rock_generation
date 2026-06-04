@@ -83,6 +83,7 @@ export default function Home() {
             isLoading={isLoading}
             wireframe={wireframe}
             autoRotate={autoRotate}
+            isCliffType={params.fractureType === 4}
           />
           {/* Error overlay */}
           {error && (

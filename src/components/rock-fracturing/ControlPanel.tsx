@@ -31,6 +31,7 @@ const FRACTURE_TYPES = [
   { value: '1', label: 'Tabular', description: 'Parallel bedding planes', icon: '▬' },
   { value: '2', label: 'Rhombohedral', description: 'Oblique-shaped equidimensional', icon: '◇' },
   { value: '3', label: 'Polyhedral', description: 'Irregular jointing', icon: '⬡' },
+  { value: '4', label: 'Cliff', description: 'Rocky cliff wall with fractured blocks', icon: '⛰️' },
 ] as const;
 
 export function ControlPanel({
